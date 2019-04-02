@@ -1,0 +1,164 @@
+---
+title: "Data Envelopment Analysis"
+subtitle: "Adapted Example from Lu Hao (Georgetown) Using Public Data"
+author: "Jason P. Casey"
+date: 2019-04-01
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+# knitr options
+knitr::opts_chunk$set(fig.width = 8,
+                      fig.asp = 0.618,
+                      echo = TRUE)
+knitr::knit_engines$set(python = reticulate::eng_python)
+
+# include user functions
+source(file="user-functions.R")
+
+# Aaditional libraries
+library(rDEA)
+
+set.seed(1965)
+
+# constants and other presets
+
+# new names for IPEDS file
+new_names <- c("unitid", "Institution Name", "Collection Year", "Carnegie Classification", "State", "Control", "Land Grant",
+               "Full-time Enrollment", "Part-time Enrollment", "Student FTE",
+               "Associates Degrees", "Bachelors Degrees", "Masters Degrees", 
+               "Research Doctorate Degrees", "Professional Doctorate Degrees", "Other Doctorate Degrees",
+               "Six-year Graduation Rate",
+               "Instruction per FTE (GASB)", "Research per FTE (GASB)", "Public Support per FTE (GASB)",
+               "Academic Support per FTE (GASB)", "Student Services per FTE (GASB)", 
+               "Institutional Support per FTE (GASB)", "Other Exp per FTE (GASB)",
+               "Instruction per FTE (FASB)", "Research per FTE (FASB)", "Public Support per FTE (FASB)",
+               "Academic Support per FTE (FASB)", "Student Services per FTE (FASB)",
+               "Institutional Support per FTE (FASB)", "Other Exp per FTE (FASB)", 
+               "Total Staff FTE", "Faculty FTE", "Instructional Staff FTE")
+```
+
+# Read Data
+
+## IPEDS Excerpt
+
+The following except was pulled by creating a custom data file on the [IPEDS](https://nces.ed.gov/ipeds/use-the-data) data page at NCES.  (My kingdom for an API to call!)  It has the usual verbose column names which I've replaced with less cryptic labels.  These data are from 2017-18, except finance, which lags a year behind.
+
+```{r read_ipeds}
+ipeds <- read_csv("data/ipeds_extract.csv",
+                  col_names = new_names,
+                  skip = 1) %>%
+  filter(Control %in% c("Private not-for-profit", "Public")) %>%
+  mutate(`Instruction Expenses per FTE` = ifelse(Control == "Public",
+                                                 `Instruction per FTE (GASB)`,
+                                                 `Instruction per FTE (FASB)`),
+         `Research Expenses per FTE` = ifelse(Control == "Public",
+                                              `Research per FTE (GASB)`,
+                                              `Research per FTE (FASB)`),
+         `Public Service Expenses per FTE` = ifelse(Control == "Public",
+                                                    `Public Support per FTE (GASB)`,
+                                                    `Public Support per FTE (FASB)`),
+         `Academic Support per FTE` = ifelse(Control == "Public",
+                                             `Academic Support per FTE (GASB)`,
+                                             `Academic Support per FTE (FASB)`),
+         `Student Services Expenses per FTE` = ifelse(Control == "Public",
+                                                      `Student Services per FTE (GASB)`,
+                                                      `Student Services per FTE (FASB)`),
+         `Institutional Support Expenses per FTE` = ifelse(Control == "Public",
+                                                           `Institutional Support per FTE (GASB)`,
+                                                           `Institutional Support per FTE (FASB)`),
+         `Other Expenses per FTE` = ifelse(Control == "Public",
+                                           `Other Exp per FTE (GASB)`,
+                                           `Other Exp per FTE (FASB)`),
+         `Total Enrollment` = `Full-time Enrollment` + `Part-time Enrollment`,
+         `Weighted Graduation Efficiency` = ((`Associates Degrees` + `Bachelors Degrees`) +
+                  1.5 * `Masters Degrees` +
+                  2 * (`Research Doctorate Degrees` +
+                         `Professional Doctorate Degrees` +
+                         `Other Doctorate Degrees`)) /
+           `Total Enrollment`,
+         `Full-time Administrative FTE` = `Total Staff FTE` - `Faculty FTE`,
+         `Administrative Expenses` = (`Academic Support per FTE` +
+                                        `Student Services Expenses per FTE`+
+                                        `Institutional Support Expenses per FTE` +
+                                        `Other Expenses per FTE`) * `Student FTE`,
+         `Student Expenses` = (`Instruction Expenses per FTE` +
+                                 `Student Services Expenses per FTE`) * `Student FTE`) %>%
+  select(-(`Instruction per FTE (GASB)`:`Other Exp per FTE (FASB)`))
+
+ipeds
+```
+
+## THE Data
+
+This extract was pulled for the 2019 publication of the [Times Higher Education World University Rankings](https://www.timeshighereducation.com/world-university-rankings/2019/world-ranking#!/page/0/length/25/sort_by/rank/sort_order/asc/cols/stats).  It was pulled using a screen-scraping script in Python.  These data align with the 2017-18 IPEDS extract.  Ranks and scores were estimated using the underlying scores using the methodology published in the guide.  _All estimated ranks and scores matched those published for the top 100 institutions._  These data were used to pull the citations and research scores.
+
+```{r read_the}
+the_data <- read_csv("data/the_data.csv") %>%
+  rename(inst_rank = rank)
+
+the_data %>%
+  ggplot(aes(x = score, y = inst_rank)) +
+  geom_point(color = "darkblue",
+             alpha = 0.15)
+```
+
+## Combine Data
+
+```{r}
+dea_data <- ipeds %>%
+  inner_join(the_data, by = "unitid")
+
+dea_data %>%
+  ggplot(aes(fte_enroll, `Student FTE`)) +
+  geom_point(color = "darkblue",
+             alpha = 0.1)
+```
+
+```{r}
+models <- tribble(
+  ~model, ~in.vars, ~out.vars,
+  'Instruction', c('StudentRelatedExpdPerFTE', 'FTEFaculty', 'Faculty_Std_Ratio'), c('6Yr_GradRate', 'TotalDegrees', 'WGE_Score'),
+  'Research', c('FTEFaculty', 'ResearchExpdperFctFTE'),c('ResearchScore_THE','CitationScore_THE', 'GovGrantsContracts'),
+  'Administrative Cost',c('TotalAdminCost', 'FullTimeStaff'),c('TotalDegrees','FTEStudentEnrollment')
+)
+
+dea_stat <- function(model) {
+  # feasible
+  # thetaOpt
+  # lambda
+  # lambda_sum
+  
+  df <- model %>%
+    mutate(feasible = map(1),
+           theta = map(2),
+           lambda = map(3),
+           lambda_sum = map(4))
+  
+  return(df)
+}
+
+# insts <- select(institutions, SchoolName_code)
+
+models <- models %>%
+  mutate(inputs = map(in.vars, grab_frame, original = institutions),
+         outputs = map(out.vars, grab_frame, original = institutions),
+         dea.model = map2(inputs, outputs, run_dea),
+         feasible = map(dea.model, 1),
+         theta = map(dea.model, 2),
+         # theta = map2(insts, theta, tibble),
+         lambda = map(dea.model, 3),
+         lambda_sum = map(dea.model, 4)) %>%
+  select(-in.vars, -out.vars, -dea.model)
+
+results <- institutions %>%
+  select(SchoolName_code)
+
+for (i in seq(1:3)) {
+  results <- cbind(results, models$theta[[i]])
+}
+
+names(results) = c('SchoolName_code', models$model)
+
+```
+
