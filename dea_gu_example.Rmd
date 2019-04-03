@@ -40,7 +40,25 @@ new_names <- c("unitid", "Institution Name", "Collection Year", "Carnegie Classi
 
 # Read Data
 
-## IPEDS Excerpt
+## IPEDS Finance
+
+```{r read_finance}
+keepers <- c("unitid",
+             "Student Expenditures")
+
+finance <- read_csv("data/finance.csv") %>%
+  replace(., is.na(.), 0) %>%
+  mutate(`Student Expenditures` = `F1617_F2.Instruction-Total amount` +
+           `F1617_F1A.Instruction - Current year total` +
+           `F1617_F2.Student service-Total amount` +
+           `F1617_F1A.Student services - Current year total` +
+           `F1617_F2.Net grant aid to students-Total amount` + 
+           `F1617_F1A.Scholarships and fellowships expenses -- Current year total`)
+
+finance
+```
+
+## IPEDS Derived Variables Extract
 
 The following except was pulled by creating a custom data file on the [IPEDS](https://nces.ed.gov/ipeds/use-the-data) data page at NCES.  (My kingdom for an API to call!)  It has the usual verbose column names which I've replaced with less cryptic labels.  These data are from 2017-18, except finance, which lags a year behind.
 
@@ -94,11 +112,11 @@ ipeds
 This extract was pulled for the 2019 publication of the [Times Higher Education World University Rankings](https://www.timeshighereducation.com/world-university-rankings/2019/world-ranking#!/page/0/length/25/sort_by/rank/sort_order/asc/cols/stats).  It was pulled using a screen-scraping script in Python.  These data align with the 2017-18 IPEDS extract.  Ranks and scores were estimated using the underlying scores using the methodology published in the guide.  _All estimated ranks and scores matched those published for the top 100 institutions._  These data were used to pull the citations and research scores.
 
 ```{r read_the}
-the_data <- read_csv("data/the_data.csv") %>%
-  rename(inst_rank = rank)
+the_data <- read_csv("data/the_data2018.csv") %>%
+  rename(`Institution Rank` = Rank)
 
 the_data %>%
-  ggplot(aes(x = score, y = inst_rank)) +
+  ggplot(aes(x = Score, y = `Institution Rank`)) +
   geom_point(color = "darkblue",
              alpha = 0.15)
 ```
