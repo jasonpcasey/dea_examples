@@ -18,6 +18,7 @@ source(file="user-functions.R")
 
 # Aaditional libraries
 library(rDEA)
+library(rgl)
 
 set.seed(1965)
 
@@ -106,7 +107,6 @@ finance <- read_csv("data/finance.csv") %>%
          `Research Expenditures` = `F1617_F1A.Research - Current year total` + `F1617_F2.Research-Total amount`) %>%
   select(keepers)
 
-finance
 ```
 
 ## IPEDS Staff
@@ -133,7 +133,6 @@ staff <- read_csv("data/staff.csv") %>%
   mutate(`Administrative FTE` = `Total FTE` - `Faculty FTE`) %>%
   select(keepers)
 
-staff
 ```
 
 ## IPEDS Enrollment
@@ -150,9 +149,7 @@ enroll <- read_csv("data/enrollment_2016.csv",
                    skip = 1) %>%
   mutate(`Estimated FTE` = `Full-time Enrollment` + `Part-time Enrollment` / 3) %>%
   select(-inst, -yr)
-  
 
-enroll
 ```
 
 ## IPEDS Degree Completions
@@ -170,7 +167,6 @@ degrees <- read_csv("data/completions.csv") %>%
   summarize(`Total Degree Awards` = sum(count),
             `Weighted Graduation Efficiency Score` = sum(wge))
 
-degrees
 ```
 
 ## IPEDS Graduation Rates
@@ -182,7 +178,6 @@ grad_rates <- read_csv("data/grad_rates.csv") %>%
          `Six-year Graduation Rate` = `DRVGR2016.Graduation rate - Bachelor degree within 6 years, total` / 100) %>%
   select(unitid, `Four-year Graduation Rate`, `Five-year Graduation Rate`, `Six-year Graduation Rate`)
 
-grad_rates
 ```
 
 ## IPEDS 12-month Enrollment
@@ -193,7 +188,6 @@ fye <- read_csv("data/fye.csv") %>%
          `Student FTE` = `DRVEF122017.12-month full-time equivalent enrollment: 2016-17`) %>%
   select(unitid, `Total Enrollment`, `Student FTE`)
 
-fye
 ```
 
 ## NSF HERD
@@ -207,7 +201,6 @@ herd <- read_csv("data/nsf_herd.csv") %>%
             `External Grants` = sum(ext, na.rm = TRUE),
             `Institutional Investment` = sum(institutional_funds, na.rm = TRUE))
 
-herd
 ```
 
 ## THE Scores
@@ -215,8 +208,6 @@ herd
 ```{r read_the}
 the_data <- read_csv("data/the_data2018.csv") %>%
   select(unitid = Unitid, `THE Citation Score` = Citations, `THE Research Score` = Research, `FTE Enrollment`)
-
-the_data
 ```
 
 ## IPEDS Institutions
@@ -240,15 +231,36 @@ institutions <- read_csv("data/ipeds_extract.csv",
   inner_join(grad_rates, by = "unitid") %>%
   inner_join(herd, by = "unitid") %>%
   inner_join(the_data, by = "unitid") %>%
-  filter(Control == "Public") %>%
+  filter(Control == "Public",
+         `Carnegie Basic Class` %in% c("Doctoral Universities: Higher Research Activity",
+                                       "Doctoral Universities: Highest Research Activity")) %>%
   mutate(`Weighted Graduation Efficiency Score` = `Weighted Graduation Efficiency Score` / `Total Enrollment`,
          `Student Expenditures per FTE` = `Student Expenditures` / `Student FTE`)
-
 
 institutions
 ```
 
+## Sniff Test
+
+Were unitids assigned correctly in THE data?
+
+```{r}
+institutions %>%
+  mutate(delta = `Student FTE` - `FTE Enrollment`,
+         oddball = ifelse(abs(delta) > 10000, `Institution Name`, "")) %>%
+  ggplot(aes(`Student FTE`, `FTE Enrollment`)) +
+  geom_point() +
+  geom_text(aes(label = oddball), hjust = 0, vjust = 0) +
+  labs(title = "THE Compared to IPEDS FYE",
+       subtitle = "Student FTE Estimates",
+       x = "IPEDS",
+       y = "THE")
+
+```
+
 # Models
+
+Each model takes a vector of input variables and a vector of output variables.  It returns the efficiency estimates (theta) and a square matrix of weights (lambda) that can be used to etimate the areas of greatest inefficiency for the inefficient (< 1.0) units on each efficiency measure.
 
 ```{r}
 models <- tribble(
@@ -257,9 +269,8 @@ models <- tribble(
   c("Student Expenditures per FTE",
     "Faculty FTE",
     "Students-to-faculty"),
-  c("Six-year Graduation Rate",
-    "Total Degree Awards",
-    "Weighted Graduation Efficiency Score"),
+  c("Weighted Graduation Efficiency Score",    # "Weighted Graduation Efficiency Score", "Six-year Graduation Rate"
+    "Total Degree Awards"),      
   "Research",
   c("Faculty FTE",
     "Institutional Investment"),
@@ -310,37 +321,49 @@ for (i in seq(1:3)) {
 names(results) = c("unitid", models$model)
 
 output <- institutions %>%
-  mutate(UNL = factor(ifelse(unitid == 181464,
-                      "UNL",
-                      "Others")),
+  mutate(UNL = ifelse(unitid == 181464,
+                      1,
+                      2),
+         UNL = factor(UNL, levels = 1:2, labels = c("UNL", "Others")),
          colorby = ifelse(unitid == 181464,
                           "red",
                           "darkgrey")) %>%
   inner_join(results)
 
-output
-```
-
-```{r}
 df <- output %>%
   select(unitid:Control, UNL, colorby, models$model)
 
-df
+df %>%
+  select(unitid, `Institution Name`, Instruction, Research, `Administrative Cost`) %>%
+  arrange(desc(Instruction), desc(Research), desc(`Administrative Cost`))
 ```
 
+# Plot: Instruction By Administrative Cost Efficiency
 
 ```{r}
-library(rgl)
-plot3d(x =df$Instruction,
-       y = df$Research,
-       z = df$`Administrative Cost`,
-       xlab = "Instructional Efficiency",
-       ylab = "Research Efficiency",
-       zlab = "Administrative Cost",
-       col = df$colorby)
+df %>%
+  ggplot(aes(`Administrative Cost`, Instruction, color = UNL)) +
+  geom_point(alpha = 3/5) +
+  labs(title = "Instructional Efficiency by Administrative Cost Efficiency",
+       y = "Instructional Efficiency",
+       x = "Administrative Cost Efficiency") +
+  theme(legend.position="none")
 ```
 
+# Plot of All Three Measures
 
+```{r}
+# plot3d(x =df$Instruction,
+#        y = df$Research,
+#        z = df$`Administrative Cost`,
+#        xlab = "Instructional Efficiency",
+#        ylab = "Research Efficiency",
+#        zlab = "Administrative Cost",
+#        col = df$colorby)
+
+```
+
+![](img/3d_plot.PNG)
 
 
 
